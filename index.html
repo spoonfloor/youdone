@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png" />
+    <link rel="manifest" href="site.webmanifest" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>You’re done!</title>
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root {
+        /* Countdown parameters */
+        --target-datetime: '2027-08-20T17:00:00';
+
+        /* Colors & typography */
+        --font-family: 'Poppins', sans-serif;
+        --font-color: #ffffff;
+        --line-height: 1.4;
+        --mobile-font-size: 22px;
+        --desktop-font-size: 32px;
+
+        /* Opacity for “less prominent” lines */
+        --faded-opacity: 0.3;
+      }
+
+      /* Reset & base */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+      }
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: #000;
+        color: var(--font-color);
+        font-family: var(--font-family);
+        line-height: var(--line-height);
+        /* Default to desktop size; mobile override below */
+        font-size: var(--desktop-font-size);
+      }
+      @media (max-width: 600px) {
+        body {
+          font-size: var(--mobile-font-size);
+        }
+      }
+
+      /* Countdown container */
+      #countdown-container {
+        text-align: center;
+      }
+      .countdown-line {
+        margin: 0.5em 0;
+        opacity: 1; /* Default to prominent */
+      }
+      /* Lines that are always dimmed if visible */
+      #month-line,
+      #quarter-line,
+      #year-line {
+        opacity: var(--faded-opacity);
+      }
+      /* Line that is always prominent if visible */
+      #week-line {
+        opacity: 1;
+      }
+      /* Class for dynamically fading the day line */
+      .day-faded {
+        opacity: var(--faded-opacity);
+      }
+      .hidden {
+        display: none;
+      }
+
+      /* Loading overlay */
+      #loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.85);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+      #loading-emoji {
+        font-size: 5rem;
+      }
+
+      /* Debug dialog */
+      #debug-dialog {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(255, 255, 255, 0.95);
+        padding: 1.5rem 2rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        z-index: 2000;
+        display: none; /* Initially hidden */
+        min-width: 280px;
+        text-align: center;
+      }
+      #debug-dialog input[type='datetime-local'] {
+        width: calc(100% - 20px);
+        margin: 0.75rem 0 1rem;
+        padding: 0.6rem 0.8rem;
+        font-size: 1rem;
+        border: 1px solid #ccc;
+        border-radius: 0.25rem;
+        box-sizing: border-box;
+      }
+      #debug-dialog button {
+        width: 100%;
+        margin: 0.5rem 0;
+        padding: 0.75rem;
+        font-size: 1.1rem;
+        border: none;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        background-color: #007bff;
+        color: white;
+        transition: background-color 0.2s ease;
+      }
+      #debug-dialog button:hover {
+        background-color: #0056b3;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="loading-overlay">
+      <span id="loading-emoji"></span>
+    </div>
+
+    <div id="countdown-container">
+      <div id="day-line" class="countdown-line"></div>
+      <div id="week-line" class="countdown-line"></div>
+      <div id="month-line" class="countdown-line"></div>
+      <div id="quarter-line" class="countdown-line"></div>
+      <div id="year-line" class="countdown-line"></div>
+    </div>
+
+    <div id="debug-dialog">
+      <input type="datetime-local" id="debug-datetime" />
+      <button id="apply-btn">Apply</button>
+    </div>
+
+    <script>
+      // ──────────────── CONSTANTS ────────────────
+      const TARGET_DATE = new Date(
+        getComputedStyle(document.documentElement)
+          .getPropertyValue('--target-datetime')
+          .replace(/["']/g, '')
+      );
+      const EMOJIS = ['🏆', '🤩', '💯', '👹', '🎉', '😅', '😎', '🤘', '🌈'];
+      const WEEK_START_DAY = 5; // Friday (0=Sun,1=Mon,…5=Fri)
+      const DAY_END_HOUR = 17; // 5 PM
+      const DEBUG_KEY = 'd';
+
+      // Helper to format Date for datetime-local input
+      function formatDateForInput(date) {
+        const year = date.getFullYear();
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const day = date.getDate().toString().padStart(2, '0');
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        const rand = EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
+        document.getElementById('loading-emoji').textContent = rand;
+
+        updateCountdown(new Date());
+        hideLoadingOverlay();
+        setupDebugDialog();
+      });
+
+      function updateCountdown(now) {
+        const target = TARGET_DATE;
+        if (now >= target) {
+          showOnlyDoneMessage();
+          return;
+        }
+
+        const daysRemaining = computeDaysRemaining(now, target);
+        const weeksRemaining = computeWeeksRemaining(now, target);
+        const monthsRemaining = computeMonthsRemaining(now, target);
+        const quartersRemaining = computeQuartersRemaining(now, target);
+        const yearsRemaining = computeYearsRemaining(now, target);
+
+        let dayText = '';
+        const isAfterDayEnd = now.getHours() >= DAY_END_HOUR;
+
+        if (daysRemaining === 1) {
+          dayText = 'Final day';
+        } else if (isAfterDayEnd) {
+          dayText = `Tomorrow plus ${daysRemaining - 1} more`;
+          if (daysRemaining - 1 <= 0) {
+            dayText = 'Tomorrow';
+          }
+        } else {
+          dayText = `Today plus ${daysRemaining - 1} more`;
+        }
+
+        let weekText = null;
+        if (weeksRemaining >= 2) {
+          weekText = `This week plus ${weeksRemaining - 1} more`;
+        }
+
+        let monthText = null;
+        if (monthsRemaining >= 2) {
+          monthText = `This month plus ${monthsRemaining - 1} more`;
+        }
+
+        let quarterText = null;
+        if (quartersRemaining >= 2) {
+          quarterText = `This quarter plus ${quartersRemaining - 1} more`;
+        }
+
+        let yearText = null;
+        if (yearsRemaining >= 2) {
+          yearText = `This year plus ${yearsRemaining - 1} more`;
+        }
+
+        writeRealLines(dayText, weekText, monthText, quarterText, yearText);
+      }
+
+      function writeRealLines(dayT, weekT, monthT, quarterT, yearT) {
+        const d = document.getElementById('day-line');
+        const w = document.getElementById('week-line');
+        const m = document.getElementById('month-line');
+        const q = document.getElementById('quarter-line');
+        const y = document.getElementById('year-line');
+
+        // Day line
+        d.textContent = dayT;
+        d.classList.remove('hidden');
+        // Only fade if any of the variables (weekT/monthT/quarterT/yearT) is non-null
+        if (weekT || monthT || quarterT || yearT) {
+          d.classList.add('day-faded');
+        } else {
+          d.classList.remove('day-faded');
+        }
+
+        // Week line
+        if (weekT) {
+          w.textContent = weekT;
+          w.classList.remove('hidden');
+        } else {
+          w.classList.add('hidden');
+        }
+
+        // Month line
+        if (monthT) {
+          m.textContent = monthT;
+          m.classList.remove('hidden');
+        } else {
+          m.classList.add('hidden');
+        }
+
+        // Quarter line
+        if (quarterT) {
+          q.textContent = quarterT;
+          q.classList.remove('hidden');
+        } else {
+          q.classList.add('hidden');
+        }
+
+        // Year line
+        if (yearT) {
+          y.textContent = yearT;
+          y.classList.remove('hidden');
+        } else {
+          y.classList.add('hidden');
+        }
+      }
+
+      function setupDebugDialog() {
+        const dialog = document.getElementById('debug-dialog');
+        const input = document.getElementById('debug-datetime');
+        const applyBtn = document.getElementById('apply-btn');
+
+        window.addEventListener('keydown', (e) => {
+          if (e.key === DEBUG_KEY) {
+            dialog.style.display =
+              dialog.style.display === 'none' ? 'block' : 'none';
+            if (dialog.style.display === 'block') {
+              // Only set to current time if field is empty
+              if (!input.value) {
+                input.value = formatDateForInput(new Date());
+              }
+            }
+          }
+        });
+
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && dialog.style.display === 'block') {
+            dialog.style.display = 'none';
+          }
+        });
+
+        applyBtn.addEventListener('click', () => {
+          const val = input.value;
+          if (!val) return;
+          updateCountdown(new Date(val));
+          dialog.style.display = 'none';
+        });
+      }
+
+      function showOnlyDoneMessage() {
+        const d = document.getElementById('day-line');
+        const w = document.getElementById('week-line');
+        const m = document.getElementById('month-line');
+        const q = document.getElementById('quarter-line');
+        const y = document.getElementById('year-line');
+
+        d.textContent = 'You’re done!';
+        d.classList.remove('hidden');
+        w.classList.add('hidden');
+        m.classList.add('hidden');
+        q.classList.add('hidden');
+        y.classList.add('hidden');
+      }
+
+      // ─────────────── TIME CALCULATIONS ───────────────
+      function computeDaysRemaining(now, target) {
+        const currentDayBlock = getPrevious5pm(now);
+        let targetBlock = new Date(target);
+
+        if (
+          targetBlock.getHours() === DAY_END_HOUR &&
+          targetBlock.getMinutes() === 0 &&
+          targetBlock.getSeconds() === 0 &&
+          targetBlock.getMilliseconds() === 0
+        ) {
+          targetBlock.setDate(targetBlock.getDate() - 1);
+        }
+        targetBlock.setHours(DAY_END_HOUR, 0, 0, 0);
+
+        const diffMs = targetBlock - currentDayBlock;
+        const daysBetween = Math.round(diffMs / (24 * 60 * 60 * 1000));
+        return daysBetween + 1;
+      }
+
+      function getPrevious5pm(dt) {
+        const d = new Date(dt);
+        if (d.getHours() < DAY_END_HOUR) {
+          d.setDate(d.getDate() - 1);
+        }
+        d.setHours(DAY_END_HOUR, 0, 0, 0);
+        return d;
+      }
+
+      function computeWeeksRemaining(now, target) {
+        const diffMs = target - now;
+        const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+        return diffMs <= 0 ? 0 : Math.ceil(diffMs / oneWeekMs);
+      }
+
+      function computeMonthsRemaining(now, target) {
+        const cmStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const tmStart = new Date(target.getFullYear(), target.getMonth(), 1);
+        const yearDiff = tmStart.getFullYear() - cmStart.getFullYear();
+        const monthDiff = tmStart.getMonth() - cmStart.getMonth();
+        return yearDiff * 12 + monthDiff + 1;
+      }
+
+      function computeQuartersRemaining(now, target) {
+        const currQ = getQuarterStart(now);
+        const targQ = getQuarterStart(target);
+        const currIdx =
+          currQ.getFullYear() * 4 + Math.floor(currQ.getMonth() / 3);
+        const targIdx =
+          targQ.getFullYear() * 4 + Math.floor(targQ.getMonth() / 3);
+        return targIdx - currIdx + 1;
+      }
+
+      function getQuarterStart(dt) {
+        const y = dt.getFullYear();
+        const m = dt.getMonth();
+        const qIdx = Math.floor(m / 3);
+        return new Date(y, qIdx * 3, 1);
+      }
+
+      function computeYearsRemaining(now, target) {
+        const cyStart = new Date(now.getFullYear(), 0, 1);
+        const tyStart = new Date(target.getFullYear(), 0, 1);
+        return tyStart.getFullYear() - cyStart.getFullYear() + 1;
+      }
+
+      function hideLoadingOverlay() {
+        document.getElementById('loading-overlay').style.display = 'none';
+      }
+    </script>
+  </body>
+</html>
